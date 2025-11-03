@@ -1,213 +1,170 @@
-import json
 import asyncio
 import base64
+import json
+import logging
 import os
 
 from dotenv import load_dotenv
-
-from google.genai.types import (
-    Part,
-    Content,
-    Blob,
-)
-
-from google.adk.runners import InMemoryRunner
-from google.adk.agents import LiveRequestQueue
-from google.adk.agents.run_config import RunConfig
-from google.genai import types
-
 from fastapi import FastAPI, WebSocket
-
-
-import logging
 from starlette.websockets import WebSocketDisconnect
 
-from example_agent.agent import root_agent
+from google import genai
+from google.genai import types
 
+# Load environment variables
 load_dotenv()
 
-async def start_agent_session(user_id: str):
-    """Starts an agent session"""
+# Configure the Gemini client
+client = genai.Client(
+    http_options={"api_version": "v1beta"},
+    api_key=os.environ.get("GEMINI_API_KEY"),
+)
 
-    # Create a Runner
-    runner = InMemoryRunner(
-        app_name=os.getenv("APP_NAME"),
-        agent=root_agent
-    )
+# Configuration for the live connection
+LIVE_CONNECT_CONFIG = types.LiveConnectConfig(
+    response_modalities=["AUDIO"],
+    media_resolution="MEDIA_RESOLUTION_MEDIUM",
+    speech_config=types.SpeechConfig(
+        voice_config=types.VoiceConfig(
+            prebuilt_voice_config=types.PrebuiltVoiceConfig(voice_name="Zephyr")
+        )
+    ),
+    context_window_compression=types.ContextWindowCompressionConfig(
+        trigger_tokens=25600,
+        sliding_window=types.SlidingWindow(target_tokens=12800),
+    ),
+    input_audio_transcription={},
+    output_audio_transcription=types.AudioTranscriptionConfig(),
+)
 
-    # Create a Session
-    session = await runner.session_service.create_session(
-        app_name=os.getenv("APP_NAME"),
-        user_id=user_id,
-    )
-
-    # Create a LiveRequestQueue for this session
-    live_request_queue = LiveRequestQueue()
-
-    # Setup RunConfig 
-    run_config = RunConfig(
-        streaming_mode="bidi",
-        realtime_input_config=types.RealtimeInputConfig(
-            automatic_activity_detection=types.AutomaticActivityDetection(
-                start_of_speech_sensitivity=types.StartSensitivity.START_SENSITIVITY_LOW,
-                end_of_speech_sensitivity=types.EndSensitivity.END_SENSITIVITY_HIGH,
-                prefix_padding_ms=0,
-                silence_duration_ms=0,
-            )
-        ),
-        response_modalities = ["AUDIO"],
-        speech_config=types.SpeechConfig(
-            voice_config=types.VoiceConfig(
-                prebuilt_voice_config=types.PrebuiltVoiceConfig(
-                    voice_name=os.getenv("AGENT_VOICE")
-                )
-            ),
-            language_code=os.getenv("AGENT_LANGUAGE")
-        ),
-        output_audio_transcription = {},
-        input_audio_transcription = {},
-    )
-
-    # Start agent session
-    live_events = runner.run_live(
-        session=session,
-        live_request_queue=live_request_queue,
-        run_config=run_config,
-    )
-    return live_events, live_request_queue
-
-
-async def agent_to_client_messaging(websocket: WebSocket, live_events):
-    """Agent to client communication: Sends structured event data."""
-    async for event in live_events:
-        try:
-            message_to_send = {
-                "author": event.author or "agent",
-                "is_partial": event.partial or False,
-                "turn_complete": event.turn_complete or False,
-                "interrupted": event.interrupted or False,
-                "parts": [],
-                "input_transcription": None,
-                "output_transcription": None
-            }
-
-            if not event.content:
-                if (message_to_send["turn_complete"] or message_to_send["interrupted"]):
-                    await websocket.send_text(json.dumps(message_to_send))
-                continue 
-
-            transcription_text = "".join(part.text for part in event.content.parts if part.text)
-            
-            if hasattr(event.content, "role") and event.content.role == "user":
-                if transcription_text:
-                    message_to_send["input_transcription"] = {
-                        "text": transcription_text,
-                        "is_final": not event.partial
-                    }
-            
-            elif hasattr(event.content, "role") and event.content.role == "model":
-                if transcription_text:
-                    message_to_send["output_transcription"] = {
-                        "text": transcription_text,
-                        "is_final": not event.partial
-                    }
-                    message_to_send["parts"].append({"type": "text", "data": transcription_text})
-
-                for part in event.content.parts:
-                    if part.inline_data and part.inline_data.mime_type.startswith("audio/pcm"):
-                        audio_data = part.inline_data.data
-                        encoded_audio = base64.b64encode(audio_data).decode("ascii")
-                        message_to_send["parts"].append({"type": "audio/pcm", "data": encoded_audio})
-                    
-                    elif part.function_call:
-                        message_to_send["parts"].append({
-                            "type": "function_call", 
-                            "data": {
-                                "name": part.function_call.name, 
-                                "args": part.function_call.args or {}
-                            }
-                        })
-                    
-                    elif part.function_response:
-                        message_to_send["parts"].append({
-                            "type": "function_response", 
-                            "data": {
-                                "name": part.function_response.name, 
-                                "response": part.function_response.response or {}
-                            }
-                        })
-
-            if (message_to_send["parts"] or 
-                message_to_send["turn_complete"] or
-                message_to_send["interrupted"] or
-                message_to_send["input_transcription"] or
-                message_to_send["output_transcription"]):
-                
-                await websocket.send_text(json.dumps(message_to_send))
-
-        except Exception as e:
-            logging.error(f"Error in agent_to_client_messaging: {e}")
-
-async def client_to_agent_messaging(websocket: WebSocket, live_request_queue: LiveRequestQueue):
-    """Client to agent communication"""
-    while True:
-        try:
-            message_json = await websocket.receive_text()
-            message = json.loads(message_json)
-            mime_type = message["mime_type"]
-
-            if mime_type == "text/plain":
-                data = message["data"]
-                content = Content(role="user", parts=[Part.from_text(text=data)])
-                live_request_queue.send_content(content=content)
-
-            elif mime_type == "audio/pcm":
-                data = message["data"]
-                decoded_data = base64.b64decode(data)
-                live_request_queue.send_realtime(Blob(data=decoded_data, mime_type=mime_type))
-
-            elif mime_type == "image/jpeg":
-                data = message["data"]
-                decoded_data = base64.b64decode(data)
-                live_request_queue.send_realtime(Blob(data=decoded_data, mime_type=mime_type))
-                
-            else:
-                logging.warning(f"Mime type not supported: {mime_type}")
-
-        except WebSocketDisconnect:
-            logging.info("Client disconnected (WebSocketDisconnect).")
-            break
-
-        except Exception as e:
-            logging.error(f"An error occurred in client_to_agent_messaging: {e}")
-
+MODEL_NAME = "models/gemini-2.5-flash-native-audio-preview-09-2025"
 
 app = FastAPI()
 
+logging.basicConfig(level=logging.INFO)
+
+
+async def forward_client_to_gemini(websocket: WebSocket, session):
+    """Receives messages from the client and forwards them to the Gemini session."""
+    try:
+        while True:
+            message_json = await websocket.receive_text()
+            message = json.loads(message_json)
+            mime_type = message.get("mime_type")
+            data = message.get("data")
+
+            if not mime_type or not data:
+                logging.warning(f"Invalid message from client: {message}")
+                continue
+
+            if mime_type == "text/plain":
+                await session.send(input=data, end_of_turn=True)
+            elif mime_type in ["audio/pcm", "image/jpeg"]:
+                decoded_data = base64.b64decode(data)
+                await session.send(input={"data": decoded_data, "mime_type": mime_type})
+            else:
+                logging.warning(f"Unsupported mime type from client: {mime_type}")
+
+    except WebSocketDisconnect:
+        logging.info("Client disconnected.")
+    except Exception as e:
+        logging.error(f"Error in forward_client_to_gemini: {e}")
+
+
+async def forward_gemini_to_client(websocket: WebSocket, session):
+    """Receives messages from the Gemini session and forwards them to the client."""
+    try:
+        while True:
+            turn = session.receive()
+            async for response in turn:
+                message_to_send = {
+                    "parts": [],
+                    "output_transcription": None,
+                    "input_transcription": None,
+                    "turn_complete": False,
+                }
+
+                if hasattr(response, "server_content"):
+                    # Handle transcriptions
+                    if (
+                        hasattr(response.server_content, "input_transcription")
+                        and response.server_content.input_transcription
+                    ):
+                        is_final = (
+                            response.server_content.input_transcription.is_final
+                            if hasattr(response.server_content.input_transcription, "is_final")
+                            else False
+                        )
+                        message_to_send["input_transcription"] = {
+                            "text": response.server_content.input_transcription.text,
+                            "is_final": is_final,
+                        }
+
+                    if (
+                        hasattr(response.server_content, "output_transcription")
+                        and response.server_content.output_transcription
+                    ):
+                        message_to_send["output_transcription"] = {
+                            "text": response.server_content.output_transcription.text
+                        }
+
+                    # Handle parts (audio, text)
+                    if hasattr(response.server_content, "model_turn") and hasattr(response.server_content.model_turn, "parts"):
+                        for part in response.server_content.model_turn.parts:
+                            if hasattr(part, "text") and part.text:
+                                message_to_send["parts"].append(
+                                    {"type": "text", "data": part.text}
+                                )
+                            if hasattr(part, "inline_data") and part.inline_data:
+                                encoded_audio = base64.b64encode(
+                                    part.inline_data.data
+                                ).decode("ascii")
+                                message_to_send["parts"].append(
+                                    {"type": "audio/pcm", "data": encoded_audio}
+                                )
+
+                if message_to_send["parts"] or message_to_send["output_transcription"] or message_to_send["input_transcription"]:
+                    await websocket.send_text(json.dumps(message_to_send))
+
+            # Signal that the turn is complete
+            await websocket.send_text(json.dumps({"turn_complete": True}))
+
+    except WebSocketDisconnect:
+        logging.info("Client disconnected, stopping forward_gemini_to_client.")
+    except Exception as e:
+        logging.error(f"Error in forward_gemini_to_client: {e}")
+
+
 @app.websocket("/ws/{user_id}")
 async def websocket_endpoint(websocket: WebSocket, user_id: str):
-    """Client websocket endpoint"""
-
-    # Wait for client connection
+    """Main WebSocket endpoint for handling client-server communication."""
     await websocket.accept()
+    logging.info(f"Client #{user_id} connected.")
 
-    # Start agent session
-    user_id_str = str(user_id)
-    live_events, live_request_queue = await start_agent_session(user_id_str)
+    try:
+        async with client.aio.live.connect(
+            model=MODEL_NAME, config=LIVE_CONNECT_CONFIG
+        ) as session:
+            logging.info(f"Started Gemini session for client #{user_id}")
 
-    # Start tasks
-    agent_to_client_task = asyncio.create_task(
-        agent_to_client_messaging(websocket, live_events)
-    )
-    client_to_agent_task = asyncio.create_task(
-        client_to_agent_messaging(websocket, live_request_queue)
-    )
+            client_to_gemini_task = asyncio.create_task(
+                forward_client_to_gemini(websocket, session)
+            )
+            gemini_to_client_task = asyncio.create_task(
+                forward_gemini_to_client(websocket, session)
+            )
 
-    # Wait until the websocket is disconnected or an error occurs
-    tasks = [agent_to_client_task, client_to_agent_task]
-    await asyncio.wait(tasks, return_when=asyncio.FIRST_EXCEPTION)
+            # Wait for either task to complete (e.g., due to disconnection)
+            done, pending = await asyncio.wait(
+                [client_to_gemini_task, gemini_to_client_task],
+                return_when=asyncio.FIRST_COMPLETED,
+            )
 
-    # Close LiveRequestQueue
-    live_request_queue.close()
-    print(f"Client #{user_id} disconnected")
+            # Cancel any pending tasks to ensure clean shutdown
+            for task in pending:
+                task.cancel()
 
+    except Exception as e:
+        logging.error(f"An error occurred in websocket_endpoint for client #{user_id}: {e}")
+    finally:
+        logging.info(f"Client #{user_id} disconnected.")

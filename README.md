@@ -144,6 +144,59 @@ The client is the Next.js application that the user interacts with.
 
     Open `http://localhost:3000` in your browser. You can now click the microphone icon to start a session!
 
+## Virtual Machine Deployment
+
+These instructions guide you through deploying the application to a virtual machine.
+
+### Prerequisites
+
+1.  A virtual machine with a public IP address.
+2.  A domain name pointed to your VM's IP address.
+3.  Docker and Docker Compose installed on the VM.
+
+### Steps
+
+1.  **Clone the repository:**
+    ```bash
+    git clone https://your-repository-url.git
+    cd realtime-conversational-agent
+    ```
+
+2.  **Set up the environment file:**
+    Create a `.env` file in the root of the project and add the necessary environment variables. You can use the `server/.env.example` as a template, but the `.env` file should be in the root directory.
+
+    ```bash
+    cp server/.env.example .env
+    ```
+
+    Edit the `.env` file to include your `GOOGLE_API_KEY` and set `SERVER_NAME` to your domain.
+
+    ```
+    # .env
+    GOOGLE_GENAI_USE_VERTEXAI=FALSE
+    GOOGLE_API_KEY="PASTE_YOUR_ACTUAL_API_KEY_HERE"
+    AGENT_VOICE="Puck"
+    AGENT_LANGUAGE="en-US"
+    SERVER_NAME="your-domain.com"
+    ```
+
+3.  **Obtain SSL Certificates:**
+    Run the `init-letsencrypt.sh` script to obtain SSL certificates from Let's Encrypt.
+
+    ```bash
+    sudo ./init-letsencrypt.sh your-domain.com docker-compose.prod.yml
+    ```
+
+4.  **Build and run the application:**
+    Use the `Makefile` to build and run the application in production mode.
+
+    ```bash
+    make prod.build
+    make prod.up.d
+    ```
+
+    Your application should now be running and accessible at `https://your-domain.com`.
+
 ## How to Customize Your Agent
 This repository is designed for easy reuse. You don't need to change any Python code to completely change your agent's persona.
 

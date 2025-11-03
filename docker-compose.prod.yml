@@ -5,23 +5,23 @@ x-common: &common
   tty: true
   restart: unless-stopped
 
-x-app-build: &app-build
-  build:
-    context: .
-    dockerfile: Dockerfile
-    args:
-      REQUIREMENT_FILE: $REQUIREMENT_FILE
-
 services:
-  app:
-    <<: [*app-build, *common]
-    command: gunicorn src.main:app -w 4 -k uvicorn.workers.UvicornWorker --bind 0.0.0.0:8000
-    ports:
-      - "8000"
+  server:
+    build:
+      context: ./server
+      dockerfile: Dockerfile
+    command: uvicorn main:app --host 0.0.0.0 --port 8000
+    restart: unless-stopped
     env_file:
       - .env
     volumes:
-      - ./:/app
+      - ./server:/app
+
+  client:
+    build:
+      context: ./client
+      dockerfile: Dockerfile
+    restart: unless-stopped
 
   certbot:
     image: certbot/certbot
@@ -41,7 +41,8 @@ services:
       - ./data/certbot/conf:/etc/letsencrypt
       - ./data/certbot/www:/var/www/certbot
     depends_on:
-      - app
+      - server
+      - client
     env_file:
       - .env
     command: '/bin/sh -c ''while :; do sleep 6h & wait $${!}; nginx -s reload; done & nginx -g "daemon off;"'''

@@ -260,14 +260,29 @@ export function useLiveConnection() {
 
         ws.onmessage = (event) => {
           const agentEvent = JSON.parse(event.data) as StructuredAgentEvent;
+
+          if (agentEvent.output_transcription && agentEvent.output_transcription.text) {
+            if (!agentEvent.parts) {
+              agentEvent.parts = [];
+            }
+            const textPartExists = agentEvent.parts.some(p => p.type === 'text');
+            if (!textPartExists) {
+              agentEvent.parts.push({
+                type: 'text',
+                data: agentEvent.output_transcription.text,
+              });
+            }
+          }
           
-          for (const part of agentEvent.parts) {
-            if (part.type === "audio/pcm") {
-              const audioDataBytes = base64ToArray(part.data);
-              audioPlayerNodeRef.current?.port.postMessage(
-                { type: 'audio_data', buffer: audioDataBytes.buffer }, 
-                [audioDataBytes.buffer]
-              );
+          if (Array.isArray(agentEvent.parts)) {
+            for (const part of agentEvent.parts) {
+              if (part.type === "audio/pcm") {
+                const audioDataBytes = base64ToArray(part.data);
+                audioPlayerNodeRef.current?.port.postMessage(
+                  { type: 'audio_data', buffer: audioDataBytes.buffer }, 
+                  [audioDataBytes.buffer]
+                );
+              }
             }
           }
 
@@ -289,19 +304,21 @@ export function useLiveConnection() {
             setEventLog((prevLog: StructuredAgentEvent[]) => [...prevLog, finalUserEvent]);
           }
 
-          const finalParts = agentEvent.parts.filter(
-            p => p.type === 'text' || p.type === 'function_call' || p.type === 'function_response'
-          );
+          if (Array.isArray(agentEvent.parts)) {
+            const finalParts = agentEvent.parts.filter(
+              p => p.type === 'text' || p.type === 'function_call' || p.type === 'function_response'
+            );
 
-          if (finalParts.length > 0 && !agentEvent.is_partial) {
-            const finalAgentEvent: StructuredAgentEvent = {
-              id: crypto.randomUUID(),
-              author: 'agent',
-              is_partial: false, 
-              turn_complete: agentEvent.turn_complete, 
-              parts: finalParts,
-            };
-            setEventLog((prevLog: StructuredAgentEvent[]) => [...prevLog, finalAgentEvent]);
+            if (finalParts.length > 0 && !agentEvent.is_partial) {
+              const finalAgentEvent: StructuredAgentEvent = {
+                id: crypto.randomUUID(),
+                author: 'agent',
+                is_partial: false, 
+                turn_complete: agentEvent.turn_complete, 
+                parts: finalParts,
+              };
+              setEventLog((prevLog: StructuredAgentEvent[]) => [...prevLog, finalAgentEvent]);
+            }
           }
 
           if (agentEvent.turn_complete) {

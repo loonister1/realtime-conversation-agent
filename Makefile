@@ -27,25 +27,25 @@ success        := success
 	@$($*_compose) logs -f
 
 %.shell:
-	@$($*_compose) exec app /bin/bash
+	@$($*_compose) exec server /bin/bash
 
 %.migrate:
-	@$($*_compose) exec app alembic upgrade head
+	@$($*_compose) exec server alembic upgrade head
 
 %.makemigration:
-	@$($*_compose) exec app alembic revision --autogenerate -m "$(msg)"
+	@$($*_compose) exec server alembic revision --autogenerate -m "$(msg)"
 
 %.upgrade:
-	@$($*_compose) exec app alembic upgrade head
+	@$($*_compose) exec server alembic upgrade head
 
 %.current:
-	@$($*_compose) exec app alembic current
+	@$($*_compose) exec server alembic current
 
 %.history:
-	@$($*_compose) exec app alembic history
+	@$($*_compose) exec server alembic history
 
 %.test:
-	@$($*_compose) exec app pytest
+	@$($*_compose) exec server pytest
 
 %.clean:
 	find . -type d -name "__pycache__" -exec rm -rf {} +

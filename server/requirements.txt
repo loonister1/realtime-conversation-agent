@@ -5,3 +5,8 @@ google-generativeai
 google-cloud-aiplatform
 requests
 google-adk
+google-genai
+opencv-python
+pyaudio
+pillow
+mss
