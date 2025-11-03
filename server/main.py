@@ -47,7 +47,6 @@ async def start_agent_session(user_id: str):
     # Setup RunConfig 
     run_config = RunConfig(
         streaming_mode="bidi",
-        session_resumption=types.SessionResumptionConfig(transparent=True),
         realtime_input_config=types.RealtimeInputConfig(
             automatic_activity_detection=types.AutomaticActivityDetection(
                 start_of_speech_sensitivity=types.StartSensitivity.START_SENSITIVITY_LOW,

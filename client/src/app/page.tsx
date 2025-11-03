@@ -58,6 +58,7 @@ export default function Home() {
     connectionState,
     latestTextMessage,
     eventLog,
+    sendTextMessage,
     connect,
     disconnect,
   } = useLiveConnection();
@@ -165,7 +166,10 @@ export default function Home() {
         {!isStreaming && !isConnecting ? (
           <>
             <button
-              onClick={() => setShowSourceModal(true)}
+              onClick={() => {
+                console.log("Mic button clicked");
+                setShowSourceModal(true)
+              }}
               className="p-4 bg-gray-700 hover:bg-gray-600 rounded-full text-white transition-all"
               aria-label="Start recording"
             >
@@ -189,6 +193,35 @@ export default function Home() {
             </span>
           </>
         )}
+
+        <div className="flex-1 min-w-0 text-center px-4">
+          {latestTextMessage && (
+            <p className="text-sm text-gray-300 truncate">
+              {latestTextMessage}
+            </p>
+          )}
+        </div>
+
+        <button
+          onClick={() => sendTextMessage("What's the weather?")}
+          className="p-4 bg-blue-600 hover:bg-blue-700 rounded-full text-white transition-all"
+          aria-label="Get weather"
+        >
+          <svg
+            xmlns="http://www.w3.org/2000/svg"
+            className="h-6 w-6"
+            fill="none"
+            viewBox="0 0 24 24"
+            stroke="currentColor"
+          >
+            <path
+              strokeLinecap="round"
+              strokeLinejoin="round"
+              strokeWidth={2}
+              d="M12 3v1m0 16v1m9-9h-1M4 12H3m15.364 6.364l-.707-.707M6.343 6.343l-.707-.707m12.728 0l-.707.707M6.343 17.657l-.707.707M16 12a4 4 0 11-8 0 4 4 0 018 0z"
+            />
+          </svg>
+        </button>
       </footer>
     </main>
   );
