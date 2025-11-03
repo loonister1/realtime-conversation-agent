@@ -1,0 +1,51 @@
+version: "3.4"
+
+x-common: &common
+  stdin_open: true
+  tty: true
+  restart: unless-stopped
+
+x-app-build: &app-build
+  build:
+    context: .
+    dockerfile: Dockerfile
+    args:
+      REQUIREMENT_FILE: $REQUIREMENT_FILE
+
+services:
+  app:
+    <<: [*app-build, *common]
+    command: gunicorn src.main:app -w 4 -k uvicorn.workers.UvicornWorker --bind 0.0.0.0:8000
+    ports:
+      - "8000"
+    env_file:
+      - .env
+    volumes:
+      - ./:/app
+
+  certbot:
+    image: certbot/certbot
+    volumes:
+      - ./data/certbot/conf:/etc/letsencrypt
+      - ./data/certbot/www:/var/www/certbot
+    entrypoint: "/bin/sh -c 'trap exit TERM; while :; do certbot renew; sleep 12h & wait $${!}; done;'"
+    <<: *common
+
+  nginx:
+    image: nginx:1.20.1
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - ./config/nginx/stage.conf:/etc/nginx/conf.d/default.conf
+      - ./data/certbot/conf:/etc/letsencrypt
+      - ./data/certbot/www:/var/www/certbot
+    depends_on:
+      - app
+    env_file:
+      - .env
+    command: '/bin/sh -c ''while :; do sleep 6h & wait $${!}; nginx -s reload; done & nginx -g "daemon off;"'''
+    <<: *common
+  # NOTE: In staging/production environments, use managed databases (AWS RDS, Google Cloud SQL, etc.)
+  # Update DATABASE_URL in .env to point to your managed database
+  # Example: DATABASE_URL=postgresql+asyncpg://username:password@your-rds-endpoint:5432/database_name
