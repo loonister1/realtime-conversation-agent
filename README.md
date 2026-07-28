@@ -144,6 +144,18 @@ The client is the Next.js application that the user interacts with.
 
     Open `http://localhost:3000` in your browser. You can now click the microphone icon to start a session!
 
+### Client Tests
+The client test suite covers the WebSocket protocol handling in `useLiveConnection` and the
+base64 helpers that move audio between the browser and the server. It runs under Vitest with a
+`jsdom` environment; no browser, microphone or running server is required.
+
+From the `client` directory:
+
+```
+npm test          # single run
+npm run test:watch
+```
+
 ## How to Customize Your Agent
 This repository is designed for easy reuse. You don't need to change any Python code to completely change your agent's persona.
 
